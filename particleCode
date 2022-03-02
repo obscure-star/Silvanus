@@ -1,0 +1,184 @@
+// Coconut coir soil used
+
+// Simple Particle code to predict volumetric
+// water content in soil using a capacitive
+// soil moisture sensor
+//
+
+SYSTEM_MODE(MANUAL);
+SYSTEM_THREAD(ENABLED);
+
+/* Sleep Function Initialization */
+
+String sleepToggle = "False";
+int goToSleep(String sleepToggle);
+int forSleep; // Global variable to turn on sleep if statement in loop
+
+
+int soil_pin = A0; // AOUT pin on sensor
+//volatile int publishflag = 0;
+
+
+
+/* softDelay() function (Safer than delay)*/
+inline void softDelay(uint32_t t) {
+  for (uint32_t ms = millis(); millis() - ms < t; Particle.process());  //  safer than a delay()
+}
+
+/* Variables */
+float slope = 2.48; // slope from linear fit
+float intercept = 0.11; // intercept from linear fit
+float soilmoisturevalue = 0.00;
+float threshold = 0.00; // Not needed
+
+/* Data for slope and intercept were taken from 
+   https://makersportal.com/blog/2020/5/26/capacitive-soil-moisture-calibration-with-arduino
+   This is for Coconut coir soil, which we are NOT using.
+*/   
+
+/* For Sleep Algorithm */
+int sleepTime = 10* 60;     // (# Minutes * 60 seconds)
+//int sleepToggle = 0; // To sleep or not to sleep
+int connectionFail = 5 * 60000 ; // (# Minutes * 60,000 ms ) During the Connection Process, Boron will "Give-Up" after this amount of time and Sleep if unsuccessful.
+
+
+void setup() {
+  Serial.begin(9600); // serial port setup
+  //analogReference(EXTERNAL); // set the analog reference to 3.3V
+  Particle.function("sleep", goToSleep); // register the cloud function
+}
+
+void loop() {
+  
+  forSleep = 0;
+  
+  /* Check if connected to the cloud FIRST */
+  softDelay(2000);
+    //Connect to Particle Clould check
+  if (Particle.connected() == false) {
+        Cellular.on();
+        softDelay(2000);
+        Particle.connect();
+        softDelay(2000);
+    }
+    
+  if (waitFor(Particle.connected, connectionFail)) {  
+    
+    Particle.publish("DeBug", "Boron Awake", PRIVATE, NO_ACK); // For Sleep Algorithm
+    
+    softDelay(2000);
+    float voltage, vol_water_cont; // preallocate to approx. voltage and theta_v (meaning volume water content)
+    float reading = (float(analogRead(soil_pin))/1023.0)*3.3;
+    
+    //float de = 1/(3*reading); // Dielectric reading
+    softDelay(2000);
+    Particle.publish("Reading", String::format("Voltage: %.3f V", reading), PRIVATE, WITH_ACK); // read Voltage from sensor
+    
+    vol_water_cont = ((1.0/reading)*slope)+intercept; // calc of theta_v (vol. water content)
+    //vol_water_cont = -0.053 + (2.93 * 0.01)* de - 5.5 * 0.0001 * de * de + 4.3 * 0.000001 * de * de * de; // Topp's equation from https://www.sciencedirect.com/topics/engineering/soil-moisture-content
+    softDelay(2000);
+    
+    Particle.publish("Volumetric Water Content / cm^3", String::format("%.3f", vol_water_cont), PRIVATE, WITH_ACK);
+    softDelay(5000); // slight delay between readings
+  
+    
+    
+    /* Algorithm for Alarm */
+    if (vol_water_cont >= 0.60) // wet (based off soil sample)
+    {
+        Particle.publish("Soil Condition is:", "Wet", PRIVATE, WITH_ACK);
+    }
+    else if (vol_water_cont <= 0.35) // dry (based off soil sample)
+    {
+        Particle.publish("Soil Condition is:", "Dry", PRIVATE, WITH_ACK);
+    }
+    else Particle.publish("Soil Condition is:", "Moderate", PRIVATE, WITH_ACK); // moderate
+    softDelay(10000);
+  
+  /* Source: https://www.nature.com/articles/s41598-020-67530-4/figures/2
+     For sending email instead of sending when the moisture reading is low (dry) send 
+     over a consecutive number of readings that were dry and a consecutive when wet. 
+     Based off figure wet for 5 months and dry for one whole month means potential 
+     of forest fire.
+  */
+  
+  /* Call Sleep Algorithm */
+    checkSleep();
+    
+
+  }
+  
+}
+
+/* Sleep Algorithm */
+
+// Function for IFTT to trigger sleep.
+
+int goToSleep(String sleepToggle) {
+  if(sleepToggle == "True")
+  {
+    /*
+    Particle.publish("Debug", "Going to Sleep", PRIVATE, NO_ACK);
+    softDelay(100000);
+    
+    Particle.disconnect();
+    softDelay(5000);
+    Cellular.off();
+    softDelay(5000);  // Step through the process safely to ensure the lowest Modem Power.
+    System.sleep( {}, {}, (sleepTime) );  //
+    softDelay(5000);
+    */
+    forSleep = 1;
+    return 1;
+    // Make it so that it returns and then goes on to do particle.disconnect()...
+  }
+  forSleep = 0;
+  return -1;
+}
+
+// Because the IFTT doesn't recieve a signal from the boron Sleep algorithm can't be in the goToSleep(String sleeptoggle)
+void checkSleep() {
+    if(forSleep == 1)
+    {
+        /* 
+        Particle.publish("Debug", "Going to Sleep", PRIVATE, NO_ACK);
+        softDelay(50000);
+        goToSleep();
+        */
+        
+        Particle.publish("Debug", "Going to Sleep", PRIVATE, NO_ACK);
+        softDelay(50000);
+    
+        Particle.disconnect();
+        softDelay(5000);
+        Cellular.off();
+        softDelay(5000);  // Step through the process safely to ensure the lowest Modem Power.
+        System.sleep( {}, {}, (sleepTime) );  //
+        softDelay(5000);
+    }
+}
+
+/* Future Edits:
+   - Include temperature sensor.
+   - Increase number of hours to sleep.
+   - Increase increments of VWC to determine when to send email.
+   - More accurate readings from Moisture sensor. Using different Moisture sensor.
+   - Communication too slow. Servers with IFTTT slightly off.
+*/
+
+// Simple code for Measuring Voltage from
+// Capacitive soil moisture sensor
+//
+/*int soil_pin = A0; // AOUT pin on sensor
+
+void setup() {
+  Serial.begin(9600); // serial port setup
+  //analogReference(EXTERNAL); // set the analog reference to 3.3V
+}
+
+void loop() {
+  Particle.publish("Soil Moisture Sensor Voltage: ");
+  float reading = (float(analogRead(soil_pin))/1023.0)*3.3;
+  Particle.publish("Reading", String::format("%.1f V", reading)); // read sensor
+  delay(5000); // slight delay between readings
+} */
